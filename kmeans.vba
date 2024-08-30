@@ -1,16 +1,77 @@
 Option Base 1
 Option Explicit
+Public Function PreprocessData(ByVal DataRange As Range) As Variant
+    Dim data As Variant
+    data = DataRange.Value
+    
+    Dim rows As Long, cols As Long
+    rows = UBound(data, 1)
+    cols = UBound(data, 2)
+    
+    Dim validCols() As Boolean
+    ReDim validCols(1 To cols)
+    
+    Dim i As Long, j As Long
+    Dim allMissing As Boolean
+    
+    ' Check each column for missing values
+    For j = 1 To cols
+        allMissing = True
+        For i = 1 To rows
+            If Not IsEmpty(data(i, j)) And IsNumeric(data(i, j)) Then
+                allMissing = False
+                Exit For
+            End If
+        Next i
+        validCols(j) = Not allMissing
+    Next j
+    
+    ' Count valid columns
+    Dim validColCount As Long
+    validColCount = 0
+    For j = 1 To cols
+        If validCols(j) Then validColCount = validColCount + 1
+    Next j
+    
+    ' Create new array with only valid columns
+    Dim processedData() As Double
+    ReDim processedData(1 To rows, 1 To validColCount)
+    
+    Dim newColIndex As Long
+    newColIndex = 1
+    
+    For j = 1 To cols
+        If validCols(j) Then
+            For i = 1 To rows
+                If IsNumeric(data(i, j)) Then
+                    processedData(i, newColIndex) = CDbl(data(i, j))
+                Else
+                    ' Handle non-numeric values (you might want to adjust this based on your needs)
+                    processedData(i, newColIndex) = 0
+                End If
+            Next i
+            newColIndex = newColIndex + 1
+        End If
+    Next j
+    
+    PreprocessData = processedData
+End Function
 
-Public Sub kmeans()
+
+Public Sub Generate_K_Means()
     Dim wkSheet As Worksheet
-    Set wkSheet = ActiveWorkbook.Worksheets("Start")
+    Set wkSheet = ActiveWorkbook.Worksheets("K-Means-Clustering")
 
-    Dim MaximumIterations As Integer: MaximumIterations = wkSheet.Range("MaximumIterations").Value
-    Dim DataSht As String: DataSht = wkSheet.Range("InputSheet").Value
-    Dim DataRange As String: DataRange = wkSheet.Range("InputRange").Value
-    Dim DataRecords As Variant: DataRecords = Worksheets(DataSht).Range(DataRange)
+    Dim MaximumIterations As Integer: MaximumIterations = wkSheet.Range("C3").Value
+    Dim DataSheet As String: DataSheet = wkSheet.Range("C4").Value
+    Dim DataRange As String: DataRange = wkSheet.Range("C5").Value
+    
+    ' Use the new preprocessing function
+    Dim DataRecords As Variant
+    DataRecords = PreprocessData(Worksheets(DataSheet).Range(DataRange))
+    
     Dim NUMBER_OF_RECORDS As Integer: NUMBER_OF_RECORDS = UBound(DataRecords, 1)
-    Dim NUMCLUSTERS As Integer: NUMCLUSTERS = wkSheet.Range("Clusters").Value
+    Dim NUMCLUSTERS As Integer: NUMCLUSTERS = wkSheet.Range("C8").Value
     Dim ClusterIndexes As Variant, Centroids As Variant, InitialCentroidsCalc As Variant
     Dim ClustersUpdated As Integer, counter As Integer: counter = 1
     Dim StartTime As Double
@@ -46,28 +107,45 @@ Public Sub kmeans()
     'Application.ScreenUpdating = True
     
     ' show the clusters assigned in the output sheet/range
-    Dim ClusterOutputSht As String: ClusterOutputSht = wkSheet.Range("OutputSheet").Value
-    Dim ClusterOutputRange As String: ClusterOutputRange = wkSheet.Range("OutputRange").Value
+    Dim ClusterOutputSht As String: ClusterOutputSht = wkSheet.Range("C6").Value
+    Dim ClusterOutputRange As String: ClusterOutputRange = wkSheet.Range("C7").Value
     Worksheets(ClusterOutputSht).Range(ClusterOutputRange).Resize(NUMBER_OF_RECORDS, 1).Value = WorksheetFunction.Transpose(ClusterIndexes)
     
     Call ShowResult(DataRecords, ClusterIndexes, Centroids, NUMCLUSTERS)
     
     ' show more results
-    Dim Distance As Double, ExpO As Double, Wk As Double
-    
+    Dim Distance As Double, ExpO As Double, Wk As Double, LogWk As Double
+
     Distance = CalculateDistances(DataRecords, Centroids, ClusterIndexes)
     ExpO = CalculateExpectation(DataRecords, NUMCLUSTERS)
     Wk = (1 / (2 * NUMBER_OF_RECORDS)) * Distance
     
     wkSheet.Range("C16").Value = Distance
-    wkSheet.Range("C17").Value = ExpO - Log(Wk)
-    'wkSheet.Range("C18").Value = ExpO
-    'wkSheet.Range("C19").Value = Wk
     
-    'MsgBox "Time elapsed " & Round(Timer - StartTime, 2) & " seconds", vbInformation
+    ' Add error checking for Wk and Log calculation
+    If Wk <= 0 Then
+        Debug.Print "Error: Wk is not positive. Wk = " & Wk
+        wkSheet.Range("C17").Value = "Error: Invalid Wk value"
+    Else
+        On Error Resume Next
+        LogWk = Log(Wk)
+        If Err.Number <> 0 Then
+            Debug.Print "Error calculating Log(Wk): " & Err.Description
+            wkSheet.Range("C17").Value = "Error: Log calculation failed"
+        Else
+            On Error GoTo 0  ' Turn off error resuming
+            wkSheet.Range("C17").Value = ExpO - LogWk
+        End If
+    End If
+    
+    ' Add these lines for debugging
+    Debug.Print "Distance: " & Distance
+    Debug.Print "ExpO: " & ExpO
+    Debug.Print "Wk: " & Wk
+    Debug.Print "Log(Wk): " & LogWk
+    
+    MsgBox "K-means clustering completed. Check the Immediate window for details.", vbInformation
 End Sub
-
-
 Function CalculateDistances(ByRef DataRecords As Variant, ByRef Centroids As Variant, ByRef Cluster_Indexes As Variant) As Variant
     Dim NUMBER_OF_RECORDS As Integer: NUMBER_OF_RECORDS = UBound(DataRecords, 1)
     Dim NUMBER_OF_COLUMNS As Integer: NUMBER_OF_COLUMNS = UBound(DataRecords, 2)
@@ -262,12 +340,25 @@ End Function
 Public Function EuclideanDistance(X As Variant, Y As Variant, NumberOfObservations As Integer) As Double
     Dim counter As Integer
     Dim RunningSumSqr As Double: RunningSumSqr = 0
+    Dim xVal As Double, yVal As Double
+    
+    On Error GoTo ErrorHandler
     
     For counter = 1 To NumberOfObservations
-        RunningSumSqr = RunningSumSqr + ((X(counter) - Y(counter)) ^ 2)
+        ' Convert values to Double, handling potential type mismatches
+        xVal = CDbl(X(counter))
+        yVal = CDbl(Y(counter))
+        
+        RunningSumSqr = RunningSumSqr + ((xVal - yVal) ^ 2)
     Next counter
     
     EuclideanDistance = Sqr(RunningSumSqr)
+    Exit Function
+    
+ErrorHandler:
+    ' Handle any errors (e.g., non-numeric data)
+    Debug.Print "Error in EuclideanDistance: " & Err.Description & " at observation " & counter
+    EuclideanDistance = -1 ' Return a sentinel value to indicate error
 End Function
 
 
@@ -335,12 +426,12 @@ Public Sub ShowResult(ByRef DataRecords As Variant, ByRef Cluster_Indexes As Var
     Dim ClusterObjects() As Variant: ReDim ClusterObjects(NUMCLUSTERS) As Variant
     Dim NUMBER_OF_RECORDS As Integer: NUMBER_OF_RECORDS = UBound(DataRecords, 1)
     
-    Set resultSheet = ActiveWorkbook.Worksheets("Result")
+    Set resultSheet = ActiveWorkbook.Worksheets("Kmean-Results")
 
     
     ' clear the old data in Result sheet
     With resultSheet
-        lRowLast = .UsedRange.Row + .UsedRange.Rows.Count - 1
+        lRowLast = .UsedRange.Row + .UsedRange.rows.Count - 1
         lColLast = .UsedRange.Column + .UsedRange.Columns.Count - 1
         Set Rng = .Range(.Range("B4"), .Cells(lRowLast, lColLast))
     End With
@@ -367,41 +458,72 @@ End Sub
 ' This will sum all the records in a cluster, and average the values. The calculated averages will form the new Centroids
 '
 Public Function ComputeCentroids(DataRecords As Variant, ClusterIdx As Variant, Number_Of_Clusters As Integer) As Variant
-    Dim NUMBER_OF_RECORDS As Integer: NUMBER_OF_RECORDS = UBound(DataRecords, 1)
-    Dim NUMBER_OF_FEATURES As Integer: NUMBER_OF_FEATURES = UBound(DataRecords, 2)
-    Dim clusterNumber As Integer, columnNumber As Integer, recordNumber As Integer, counter As Integer
-    Dim tempSum() As Variant: ReDim tempSum(Number_Of_Clusters, NUMBER_OF_FEATURES) As Variant
-    Dim Centroids() As Variant: ReDim Centroids(Number_Of_Clusters, NUMBER_OF_FEATURES) As Variant
+    Dim NUMBER_OF_RECORDS As Long: NUMBER_OF_RECORDS = UBound(DataRecords, 1)
+    Dim NUMBER_OF_FEATURES As Long: NUMBER_OF_FEATURES = UBound(DataRecords, 2)
+    Dim clusterNumber As Long, columnNumber As Long, recordNumber As Long
+    Dim Centroids() As Double: ReDim Centroids(1 To Number_Of_Clusters, 1 To NUMBER_OF_FEATURES)
+    Dim ClusterCounts() As Long: ReDim ClusterCounts(1 To Number_Of_Clusters)
+    Dim dataValue As Variant
+    Dim errorMsg As String
     
+    On Error GoTo ErrorHandler
+    
+    ' Initialize Centroids array to 0
     For clusterNumber = 1 To Number_Of_Clusters
+        For columnNumber = 1 To NUMBER_OF_FEATURES
+            Centroids(clusterNumber, columnNumber) = 0
+        Next columnNumber
+    Next clusterNumber
     
+    ' Sum up values for each cluster
+    For recordNumber = 1 To NUMBER_OF_RECORDS
+        If IsEmpty(ClusterIdx(recordNumber)) Then
+            errorMsg = "Empty cluster index at record " & recordNumber
+            GoTo ErrorHandler
+        End If
+        
+        clusterNumber = CLng(ClusterIdx(recordNumber))
+        If clusterNumber <= 0 Or clusterNumber > Number_Of_Clusters Then
+            errorMsg = "Invalid cluster number " & clusterNumber & " at record " & recordNumber
+            GoTo ErrorHandler
+        End If
+        
+        For columnNumber = 1 To NUMBER_OF_FEATURES
+            dataValue = DataRecords(recordNumber, columnNumber)
+            If IsEmpty(dataValue) Or IsNull(dataValue) Or Not IsNumeric(dataValue) Then
+                errorMsg = "Invalid data at record " & recordNumber & ", column " & columnNumber
+                GoTo ErrorHandler
+            End If
+            Centroids(clusterNumber, columnNumber) = Centroids(clusterNumber, columnNumber) + CDbl(dataValue)
+        Next columnNumber
+        ClusterCounts(clusterNumber) = ClusterCounts(clusterNumber) + 1
+    Next recordNumber
+    
+    ' Calculate average for each centroid
+    For clusterNumber = 1 To Number_Of_Clusters
+        If ClusterCounts(clusterNumber) > 0 Then
             For columnNumber = 1 To NUMBER_OF_FEATURES
-            
-                    counter = 0
-                    For recordNumber = 1 To NUMBER_OF_RECORDS
-                        If ClusterIdx(recordNumber) = clusterNumber Then
-                            
-                            ' if this record is part of the cluster then add
-                            Centroids(clusterNumber, columnNumber) = Centroids(clusterNumber, columnNumber) + DataRecords(recordNumber, columnNumber)
-                            counter = counter + 1
-                        End If
-                    Next recordNumber
-                    
-                    If counter > 0 Then
-                        
-                        ' compute the new centroid averaging all records in the cluster
-                        Centroids(clusterNumber, columnNumber) = Centroids(clusterNumber, columnNumber) / counter
-                    Else
-                        Centroids(clusterNumber, columnNumber) = 0
-                    End If
-                    
+                Centroids(clusterNumber, columnNumber) = Centroids(clusterNumber, columnNumber) / ClusterCounts(clusterNumber)
             Next columnNumber
-            
+        Else
+            errorMsg = "No data points assigned to cluster " & clusterNumber
+            GoTo ErrorHandler
+        End If
     Next clusterNumber
     
     ComputeCentroids = Centroids
+    Exit Function
+    
+ErrorHandler:
+    If errorMsg = "" Then
+        errorMsg = "Unexpected error in ComputeCentroids: " & Err.Description
+    End If
+    Debug.Print errorMsg & " at Cluster " & clusterNumber & ", Column " & columnNumber & ", Record " & recordNumber
+    
+    ' Instead of raising an error, return an error indicator
+    Dim ErrorCentroids(1 To 1, 1 To 1) As Variant
+    ErrorCentroids(1, 1) = "ERROR: " & errorMsg
+    ComputeCentroids = ErrorCentroids
 End Function
 
-
-
-
+'Should run'
